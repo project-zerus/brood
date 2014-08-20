@@ -188,6 +188,51 @@ ZkClient::connect(const folly::fbstring& serverList) {
 }
 
 void
+ZkClient::createEphemeral(
+  const folly::fbstring& path,
+  const folly::fbstring& data) {
+  zhandle_t* zhandle = zHandle_.get();
+  CHECK(nullptr != zhandle) << "zhandle is NULL";
+  int code = zoo_create(
+    zhandle,
+    path.c_str(),
+    data.data(),
+    data.length(),
+    &ZOO_READ_ACL_UNSAFE,
+    ZOO_EPHEMERAL,
+    nullptr,
+    0
+  );
+  CHECK(ZOK == code)
+    << "zoo_acreate() failed with error: "
+    << zooErrorCodeToString(code);
+}
+
+folly::fbstring
+ZkClient::createEphemeralSequence(
+  const folly::fbstring& path,
+  const folly::fbstring& data) {
+  zhandle_t* zhandle = zHandle_.get();
+  CHECK(nullptr != zhandle) << "zhandle is NULL";
+  folly::fbstring newPath;
+  newPath.resize(path.size() * 3);
+  int code = zoo_create(
+    zhandle,
+    path.c_str(),
+    data.data(),
+    data.length(),
+    &ZOO_READ_ACL_UNSAFE,
+    ZOO_EPHEMERAL | ZOO_SEQUENCE,
+    (char*) newPath.data(),
+    newPath.size()
+  );
+  CHECK(ZOK == code)
+    << "zoo_acreate() failed with error: "
+    << zooErrorCodeToString(code);
+  return std::move(newPath);
+}
+
+void
 ZkClient::subscribeDataChanges(
   const folly::fbstring& path,
   DataChangeCallback dataChangeCallback) {

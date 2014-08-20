@@ -40,6 +40,16 @@ public:
 
   void connect(const folly::fbstring& serverList);
 
+  void createEphemeral(
+    const folly::fbstring& path,
+    const folly::fbstring& data
+  );
+
+  folly::fbstring createEphemeralSequence(
+    const folly::fbstring& path,
+    const folly::fbstring& data
+  );
+
   void subscribeDataChanges(
     const folly::fbstring& path,
     DataChangeCallback dataChangeCallback
