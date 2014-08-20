@@ -8,6 +8,7 @@ cc_library(
     '//folly:folly',
     '//thirdparty/gflags:gflags',
     '//thirdparty/glog:glog',
+    '//toft/system/threading:threading',
     '//zookeeper:zookeeper',
   ]
 )

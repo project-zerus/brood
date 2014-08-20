@@ -31,8 +31,12 @@ int main(int argc, char** argv) {
   zkClient.connect(FLAGS_zkHost);
   zkClient.subscribeDataChanges(
     FLAGS_path,
-    [] (const folly::fbstring& value) {
+    [] (const folly::fbstring& value, const bool deleted) {
       LOG(INFO) << "PID #" << pthread_self();
+      if (deleted) {
+        LOG(INFO) << "node deleted";
+        return;
+      }
       LOG(INFO) << "data changed: " << value;
     }
   );

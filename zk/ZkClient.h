@@ -12,6 +12,8 @@
 
 #include <boost/noncopyable.hpp>
 
+#include "toft/system/threading/mutex.h"
+
 #include "cpp-btree/btree_map.h"
 
 #include "folly/FBString.h"
@@ -22,7 +24,7 @@ namespace zerus {
 namespace brood {
 namespace zk {
 
-typedef std::function<void(const folly::fbstring& value)>
+typedef std::function<void(const folly::fbstring& value, const bool deleted)>
 DataChangeCallback;
 
 class ZHandleDeleter {
@@ -42,6 +44,8 @@ public:
     const folly::fbstring& path,
     DataChangeCallback dataChangeCallback
   );
+
+  void unsubscribeDataChanges(const folly::fbstring& path);
 
 private:
   static int ZK_TIMEOUT;
@@ -65,6 +69,8 @@ private:
   );
 
   std::unique_ptr<zhandle_t, ZHandleDeleter> zHandle_;
+
+  toft::Mutex dataChangeCallbackMapMutex_;
   btree::btree_map<folly::fbstring, DataChangeCallback> dataChangeCallbackMap_;
 };
 

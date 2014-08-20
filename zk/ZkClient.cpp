@@ -54,6 +54,61 @@ zooWatcherEventToString(int event) {
   return "INVALID_EVENT";
 }
 
+folly::fbstring
+zooErrorCodeToString(int error) {
+  switch (error) {
+  case ZOK:
+    return "ZOK";
+  case ZSYSTEMERROR:
+    return "ZSYSTEMERROR";
+  case ZRUNTIMEINCONSISTENCY:
+    return "ZRUNTIMEINCONSISTENCY";
+  case ZDATAINCONSISTENCY:
+    return "ZDATAINCONSISTENCY";
+  case ZCONNECTIONLOSS:
+    return "ZCONNECTIONLOSS";
+  case ZMARSHALLINGERROR:
+    return "ZMARSHALLINGERROR";
+  case ZUNIMPLEMENTED:
+    return "ZUNIMPLEMENTED";
+  case ZOPERATIONTIMEOUT:
+    return "ZOPERATIONTIMEOUT";
+  case ZBADARGUMENTS:
+    return "ZBADARGUMENTS";
+  case ZINVALIDSTATE:
+    return "ZINVALIDSTATE";
+  case ZAPIERROR:
+    return "ZAPIERROR";
+  case ZNONODE:
+    return "ZNONODE";
+  case ZNOAUTH:
+    return "ZNOAUTH";
+  case ZBADVERSION:
+    return "ZBADVERSION";
+  case ZNOCHILDRENFOREPHEMERALS:
+    return "ZNOCHILDRENFOREPHEMERALS";
+  case ZNODEEXISTS:
+    return "ZNODEEXISTS";
+  case ZNOTEMPTY:
+    return "ZNOTEMPTY";
+  case ZSESSIONEXPIRED:
+    return "ZSESSIONEXPIRED";
+  case ZINVALIDCALLBACK:
+    return "ZINVALIDCALLBACK";
+  case ZINVALIDACL:
+    return "ZINVALIDACL";
+  case ZAUTHFAILED:
+    return "ZAUTHFAILED";
+  case ZCLOSING:
+    return "ZCLOSING";
+  case ZNOTHING:
+    return "ZNOTHING";
+  case ZSESSIONMOVED:
+    return "ZSESSIONMOVED";
+  }
+  return folly::fbstring("UNKNOWNERROR(") + error + ")";
+}
+
 struct DataChangeCallbackContext {
   folly::fbstring path;
   ZkClient* zkClient;
@@ -66,7 +121,9 @@ ZHandleDeleter::operator() (zhandle_t* zhandle) const {
   CHECK(nullptr != zhandle) << "NULL zhandle";
   LOG(INFO) << "Destroying zhandle: " << zhandle;
   int result = zookeeper_close(zhandle);
-  CHECK(ZOK == result) << "zookeeper_close() failed with result: " << result;
+  CHECK(ZOK == result)
+    << "zookeeper_close() failed with error: "
+    << zooErrorCodeToString(result);
 }
 
 int ZkClient::ZK_TIMEOUT = 10000;
@@ -79,19 +136,23 @@ ZkClient::dataChangeCallback(
   const struct Stat* stat,
   const void* data) {
   CHECK(ZOK == returnCode)
-    << "dataChangeCallback() failed with return code: " << returnCode;
+    << "dataChangeCallback() failed with error: "
+    << zooErrorCodeToString(returnCode);
   CHECK(data != nullptr) << "NULL data pointer";
   const auto* context = static_cast<const DataChangeCallbackContext*>(data);
   folly::fbstring path(std::move(context->path));
   auto* zkClient = context->zkClient;
   delete context;
-  auto it = zkClient->dataChangeCallbackMap_.find(path);
-  auto end = zkClient->dataChangeCallbackMap_.end();
-  if (it == end) {
-    LOG(ERROR) << "No callback registered at path: " << path;
-    return;
+  {
+    toft::Mutex::Locker locker(&zkClient->dataChangeCallbackMapMutex_);
+    auto it = zkClient->dataChangeCallbackMap_.find(path);
+    auto end = zkClient->dataChangeCallbackMap_.end();
+    if (it == end) {
+      LOG(ERROR) << "No callback registered at path: " << path;
+      return;
+    }
+    it->second(folly::fbstring(value, valueLength), false);
   }
-  it->second(folly::fbstring(value, valueLength));
 }
 
 void
@@ -130,7 +191,10 @@ void
 ZkClient::subscribeDataChanges(
   const folly::fbstring& path,
   DataChangeCallback dataChangeCallback) {
-  dataChangeCallbackMap_[path] = std::move(dataChangeCallback);
+  {
+    toft::Mutex::Locker locker(&dataChangeCallbackMapMutex_);
+    dataChangeCallbackMap_[path] = std::move(dataChangeCallback);
+  }
   DataChangeCallbackContext* context = new DataChangeCallbackContext();
   context->path = path;
   context->zkClient = this;
@@ -143,7 +207,21 @@ ZkClient::subscribeDataChanges(
     ZkClient::dataChangeCallback,
     context
   );
-  CHECK(ZOK == returnCode) << "zoo_aget() failed with code: " << returnCode;
+  CHECK(ZOK == returnCode)
+    << "zoo_aget() failed with error: "
+    << zooErrorCodeToString(returnCode);
+}
+
+void
+ZkClient::unsubscribeDataChanges(const folly::fbstring& path) {
+  toft::Mutex::Locker locker(&dataChangeCallbackMapMutex_);
+  auto it = dataChangeCallbackMap_.find(path);
+  auto end = dataChangeCallbackMap_.end();
+  if (it == end) {
+    LOG(ERROR) << "No callback registered at path: " << path;
+    return;
+  }
+  dataChangeCallbackMap_.erase(it);
 }
 
 void
@@ -169,7 +247,19 @@ ZkClient::watcherCallback(int eventType, int state, const char* path) {
         ZkClient::dataChangeCallback,
         context
       );
-      CHECK(ZOK == returnCode) << "zoo_aget() failed with code: " << returnCode;
+      CHECK(ZOK == returnCode)
+        << "zoo_aget() failed with code: "
+        << zooErrorCodeToString(returnCode);
+    } else if (ZOO_DELETED_EVENT == eventType) {
+      toft::Mutex::Locker locker(&dataChangeCallbackMapMutex_);
+      auto it = dataChangeCallbackMap_.find(path);
+      auto end = dataChangeCallbackMap_.end();
+      if (it == end) {
+        LOG(ERROR) << "No callback registered at path: " << path;
+        return;
+      }
+      it->second("", true);
+      dataChangeCallbackMap_.erase(it);
     }
   } else if (ZOO_CONNECTING_STATE == state) {
   } else if (ZOO_ASSOCIATING_STATE == state) {
